@@ -15,6 +15,8 @@ part './options/macos_options.dart';
 part './options/web_options.dart';
 part './options/windows_options.dart';
 
+final Map<String, List<ValueChanged<String?>>> _listeners = {};
+
 class FlutterSecureStorage {
   final IOSOptions iOptions;
   final AndroidOptions aOptions;
@@ -33,8 +35,45 @@ class FlutterSecureStorage {
   });
 
   static const UNSUPPORTED_PLATFORM = 'unsupported_platform';
+
   FlutterSecureStoragePlatform get _platform =>
       FlutterSecureStoragePlatform.instance;
+
+  ///Register [listener] for [key] with the [value] injected for the listener.
+  ///The [listener] will still be called when you delete the [key] with the injected [value] as null.
+  ///This listener will be added to the list of registered listeners for that [key].
+  void registerListener({
+    required String key,
+    required ValueChanged<String?> listener,
+  }) {
+    _listeners[key] = [..._listeners[key] ?? [], listener];
+  }
+
+  ///Unregister listener for [Key].
+  ///The other registered listeners for [key] will be remained.
+  void unregisterListener({
+    required String key,
+    required ValueChanged<String?> listener,
+  }) {
+    final listenersForKey = _listeners[key];
+
+    if (listenersForKey == null || listenersForKey.isEmpty) {
+      return;
+    }
+
+    listenersForKey.remove(listener);
+    _listeners[key] = listenersForKey;
+  }
+
+  ///Unregister all listeners for [key].
+  void unregisterAllListenersForKey({required String key}) {
+    _listeners.remove(key);
+  }
+
+  ///Unregister all listeners for all keys.
+  void unregisterAllListeners() {
+    _listeners.clear();
+  }
 
   /// Encrypts and saves the [key] with the given [value].
   ///
@@ -58,31 +97,36 @@ class FlutterSecureStorage {
     WebOptions? webOptions,
     MacOsOptions? mOptions,
     WindowsOptions? wOptions,
-  }) =>
-      value == null
-          ? _platform.delete(
-              key: key,
-              options: _selectOptions(
-                iOptions,
-                aOptions,
-                lOptions,
-                webOptions,
-                mOptions,
-                wOptions,
-              ),
-            )
-          : _platform.write(
-              key: key,
-              value: value,
-              options: _selectOptions(
-                iOptions,
-                aOptions,
-                lOptions,
-                webOptions,
-                mOptions,
-                wOptions,
-              ),
-            );
+  }) async {
+    if (value == null) {
+      await _platform.delete(
+        key: key,
+        options: _selectOptions(
+          iOptions,
+          aOptions,
+          lOptions,
+          webOptions,
+          mOptions,
+          wOptions,
+        ),
+      );
+    } else {
+      await _platform.write(
+        key: key,
+        value: value,
+        options: _selectOptions(
+          iOptions,
+          aOptions,
+          lOptions,
+          webOptions,
+          mOptions,
+          wOptions,
+        ),
+      );
+    }
+
+    _callListenersForKey(key, value);
+  }
 
   /// Decrypts and returns the value for the given [key] or null if [key] is not in the storage.
   ///
@@ -166,18 +210,32 @@ class FlutterSecureStorage {
     WebOptions? webOptions,
     MacOsOptions? mOptions,
     WindowsOptions? wOptions,
-  }) =>
-      _platform.delete(
-        key: key,
-        options: _selectOptions(
-          iOptions,
-          aOptions,
-          lOptions,
-          webOptions,
-          mOptions,
-          wOptions,
-        ),
-      );
+  }) async {
+    await _platform.delete(
+      key: key,
+      options: _selectOptions(
+        iOptions,
+        aOptions,
+        lOptions,
+        webOptions,
+        mOptions,
+        wOptions,
+      ),
+    );
+
+    _callListenersForKey(key);
+  }
+
+  void _callListenersForKey(String key, [String? value]) {
+    final listenersForKey = _listeners[key];
+    if (listenersForKey == null || listenersForKey.isEmpty) {
+      return;
+    }
+
+    for (final listener in listenersForKey) {
+      listener(value);
+    }
+  }
 
   /// Decrypts and returns all keys with associated values.
   ///
@@ -223,17 +281,24 @@ class FlutterSecureStorage {
     WebOptions? webOptions,
     MacOsOptions? mOptions,
     WindowsOptions? wOptions,
-  }) =>
-      _platform.deleteAll(
-        options: _selectOptions(
-          iOptions,
-          aOptions,
-          lOptions,
-          webOptions,
-          mOptions,
-          wOptions,
-        ),
-      );
+  }) async {
+    await _platform.deleteAll(
+      options: _selectOptions(
+        iOptions,
+        aOptions,
+        lOptions,
+        webOptions,
+        mOptions,
+        wOptions,
+      ),
+    );
+
+    _listeners.forEach((key, listeners) {
+      for (final listener in listeners) {
+        listener(null);
+      }
+    });
+  }
 
   /// Select correct options based on current platform
   Map<String, String> _selectOptions(
@@ -260,6 +325,28 @@ class FlutterSecureStorage {
       throw UnsupportedError(UNSUPPORTED_PLATFORM);
     }
   }
+
+  /// iOS only feature
+  ///
+  /// On all unsupported platforms returns null
+  Stream<bool>? get onCupertinoProtectedDataAvailabilityChanged =>
+      _platform is MethodChannelFlutterSecureStorage
+          ? (_platform as MethodChannelFlutterSecureStorage)
+              .onCupertinoProtectedDataAvailabilityChanged
+          : null;
+
+  /// iOS and macOS only feature.
+  ///
+  /// On macOS this is only available on macOS 12 or newer. On older versions always returns true.
+  /// On all unsupported platforms returns null
+  ///
+  /// iOS: https://developer.apple.com/documentation/uikit/uiapplication/1622925-isprotecteddataavailable
+  /// macOS: https://developer.apple.com/documentation/appkit/nsapplication/3752992-isprotecteddataavailable
+  Future<bool?> isCupertinoProtectedDataAvailable() async =>
+      _platform is MethodChannelFlutterSecureStorage
+          ? await (_platform as MethodChannelFlutterSecureStorage)
+              .isCupertinoProtectedDataAvailable()
+          : null;
 
   /// Initializes the shared preferences with mock values for testing.
   @visibleForTesting
