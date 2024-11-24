@@ -11,6 +11,7 @@ import androidx.annotation.NonNull;
 import java.io.FileNotFoundException;
 import java.io.PrintWriter;
 import java.io.StringWriter;
+import java.util.HashMap;
 import java.util.Map;
 
 import io.flutter.embedding.engine.plugins.FlutterPlugin;
@@ -30,7 +31,7 @@ public class FlutterSecureStoragePlugin implements MethodCallHandler, FlutterPlu
 
     public void initInstance(BinaryMessenger messenger, Context context) {
         try {
-            secureStorage = new FlutterSecureStorage(context);
+            secureStorage = new FlutterSecureStorage(context, new HashMap<>());
 
             workerThread = new HandlerThread("com.it_nomads.fluttersecurestorage.worker");
             workerThread.start();
@@ -70,17 +71,13 @@ public class FlutterSecureStoragePlugin implements MethodCallHandler, FlutterPlu
     @SuppressWarnings("unchecked")
     private String getKeyFromCall(MethodCall call) {
         Map<String, Object> arguments = (Map<String, Object>) call.arguments;
-        return addPrefixToKey((String) arguments.get("key"));
+        return secureStorage.addPrefixToKey((String) arguments.get("key"));
     }
 
     @SuppressWarnings("unchecked")
     private String getValueFromCall(MethodCall call) {
         Map<String, Object> arguments = (Map<String, Object>) call.arguments;
         return (String) arguments.get("value");
-    }
-
-    private String addPrefixToKey(String key) {
-        return secureStorage.ELEMENT_PREFERENCES_KEY_PREFIX + "_" + key;
     }
 
     /**
@@ -129,6 +126,7 @@ public class FlutterSecureStoragePlugin implements MethodCallHandler, FlutterPlu
             boolean resetOnError = false;
             try {
                 secureStorage.options = (Map<String, Object>) ((Map<String, Object>) call.arguments).get("options");
+                secureStorage.ensureOptions();
                 resetOnError = secureStorage.getResetOnError();
                 switch (call.method) {
                     case "write": {
@@ -189,12 +187,18 @@ public class FlutterSecureStoragePlugin implements MethodCallHandler, FlutterPlu
                         secureStorage.deleteAll();
                         result.success("Data has been reset");
                     } catch (Exception ex) {
-                        throw new RuntimeException(ex);
+                        handleException(ex);
                     }
                 } else {
-                    throw new RuntimeException(e);
+                    handleException(e);
                 }
             }
+        }
+
+        private void handleException(Exception e) {
+            StringWriter stringWriter = new StringWriter();
+            e.printStackTrace(new PrintWriter(stringWriter));
+            result.error("Exception encountered", call.method, stringWriter.toString());
         }
     }
 }
